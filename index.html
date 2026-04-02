@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Achordance</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; pointer-events: none; }
+        #menu { pointer-events: auto; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; text-align: center; }
+        #health-bar-container { position: absolute; bottom: 20px; width: 300px; height: 20px; border: 2px solid white; display: none; }
+        #health-bar { width: 100%; height: 100%; background: lime; transition: width 0.2s; }
+        .song-btn { display: block; margin: 10px; padding: 10px 20px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div id="ui-layer">
+        <div id="menu">
+            <h1>Achordance</h1>
+            <p>Connect your MIDI keyboard to play</p>
+            <button class="song-btn" onclick="startGame('song1.mp3')">Cyberpunk Beat</button>
+            <button class="song-btn" onclick="startGame('song2.mp3')">Synthwave Night</button>
+        </div>
+        <div id="health-bar-container">
+            <div id="health-bar"></div>
+        </div>
+    </div>
+
+    <!-- Load Three.js from CDN -->
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com" } }
+    </script>
+
+    <script type="module">
+     /* Start of main functionality*/
+        
+        import * as THREE from 'three';
+        const SHARPS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        const FLATS = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Bb', 'G', 'Ab', 'A', 'Bb', 'B'];
+        const activeNotes = new Set();
+        
+        // Scene setup with 16:9 ratio
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, 16/9, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerWidth * (9/16)); // 16:9 aspect ratio
+        document.body.appendChild(renderer.domElement);
+
+        // Game Objects
+        const cityGeometry = new THREE.BoxGeometry(2, 4, 2);
+        const cityMaterial = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
+        const city = new THREE.Mesh(cityGeometry, cityMaterial);
+        scene.add(city);
+
+        const light = new THREE.PointLight(0xffffff, 100, 100);
+        light.position.set(0, 10, 10);
+        scene.add(light);
+        camera.position.z = 15;
+        
+        // MIDI Setup
+        if (navigator.requestMIDIAccess) {
+            navigator.requestMIDIAccess().then(onMidiSuccess, () => console.log("MIDI access failed"));
+        }
+
+        // Game Logic
+        let health = 100;
+        let enemies = [];
+        let isPlaying = false;
+
+        // Game start
+        window.startGame = (songUrl) => {
+            document.getElementById('menu').style.display = 'none';
+            document.getElementById('health-bar-container').style.display = 'block';
+            isPlaying = true;
+            // Load audio here using THREE.AudioLoader
+        };
+        
+        animate();
+        
+    /* End of main functionality */
+
+        function handleMidiMessage(msg) {
+            const [status, note, velocity] = msg.data;
+            const isNoteOn = (status & 0xf0) === 0x90 && velocity > 0;
+            const isNoteOff = (status & 0xf0) === 0x80 || (velocity === 0);
+        
+            if (isNoteOn) {
+                activeNotes.add(note);
+                checkDefeat();
+            } else if (isNoteOff) {
+                activeNotes.delete(note);
+            }
+        } // End of handleMidiMessage()
+        
+        function getNoteData(midiNumber) {
+            const name = NOTES[midiNumber % 12];
+            const octave = Math.floor(midiNumber / 12) - 1;
+            // Standard 88-key piano is MIDI 21 to 108. Middle C is 60.
+            const side = midiNumber < 60 ? 'left' : 'right'; 
+            return { name, octave, side };
+        } // End of getNoteData
+        
+        function onMidiSuccess(midiAccess) {
+            for (let input of midiAccess.inputs.values()) {
+                input.onmidimessage = handleMidiMessage;
+            }
+        } // End of onMidiSuccess()
+
+        function checkDefeat() {
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                const required = enemy.userData.requiredNotes;
+        
+                // Check if all required notes are currently pressed
+                const isMatch = required.every(note => activeNotes.has(note));
+                
+                // For chords: Ensure the number of pressed keys matches the requirement
+                if (isMatch && (!enemy.userData.isChord || activeNotes.size === required.length)) {
+                    scene.remove(enemy);
+                    enemies.splice(i, 1);
+                    console.log("Enemy Defeated!");
+                }
+            }
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            if (isPlaying) {
+                // Update enemy positions and check for city damage
+                renderer.render(scene, camera);
+            }
+        } // End of animate()
+
+        function spawnEnemy(side) {
+            const geometry = new THREE.SphereGeometry(1);
+            const material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+            const enemy = new THREE.Mesh(geometry, material);
+        
+            // Filter notes: Left side enemies get notes < 60, Right side > 60
+            const possibleNotes = side === 'left' ? [48, 50, 52] : [72, 74, 76];
+            const targetNote = possibleNotes[Math.floor(Math.random() * possibleNotes.length)];
+            
+            // Store data for the hit-check logic
+            enemy.userData = {
+                requiredNotes: [targetNote], // Can be multiple for chords
+                side: side,
+                isChord: false
+            };
+        
+            enemy.position.set(side === 'left' ? -20 : 20, 0, 0);
+            scene.add(enemy);
+            enemies.push(enemy);
+        } // End of spawnEnemy()
+    </script>
+</body>
+</html>
