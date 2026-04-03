@@ -46,9 +46,9 @@
         document.body.appendChild(renderer.domElement);
 
         // Game Objects
-        const cityGeometry = new THREE.BoxGeometry(2, 4, 2);
-        const cityMaterial = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
-        const city = new THREE.Mesh(cityGeometry, cityMaterial);
+        const cityGeo = new THREE.BoxGeometry(2, 10, 2); // Width, Height, Depth
+        const cityMat = new THREE.MeshStandardMaterial({ color: 0x00ff88 });
+        const city = new THREE.Mesh(cityGeo, cityMat);
         scene.add(city);
 
         const light = new THREE.PointLight(0xffffff, 100, 100);
@@ -71,39 +71,27 @@
             document.getElementById('menu').style.display = 'none';
             document.getElementById('health-bar-container').style.display = 'block';
             isPlaying = true;
+            
             // Load audio here using THREE.AudioLoader
+
+            // Call external .js file to start launching enemies timed to music
         };
         
         animate();
         
     /* End of main functionality */
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            if (isPlaying) {
+                // Update enemy positions and check for city damage
+                updateEnemies();
+                checkMidiInput();
+            }
 
-        function handleMidiMessage(msg) {
-            const [status, note, velocity] = msg.data;
-            const isNoteOn = (status & 0xf0) === 0x90 && velocity > 0;
-            const isNoteOff = (status & 0xf0) === 0x80 || (velocity === 0);
-        
-            if (isNoteOn) {
-                activeNotes.add(note);
-                checkDefeat();
-            } else if (isNoteOff) {
-                activeNotes.delete(note);
-            }
-        } // End of handleMidiMessage()
-        
-        function getNoteData(midiNumber) {
-            const name = NOTES[midiNumber % 12];
-            const octave = Math.floor(midiNumber / 12) - 1;
-            // Standard 88-key piano is MIDI 21 to 108. Middle C is 60.
-            const side = midiNumber < 60 ? 'left' : 'right'; 
-            return { name, octave, side };
-        } // End of getNoteData
-        
-        function onMidiSuccess(midiAccess) {
-            for (let input of midiAccess.inputs.values()) {
-                input.onmidimessage = handleMidiMessage;
-            }
-        } // End of onMidiSuccess()
+            renderer.render(scene, camera);
+        } // End of animate()
 
         function checkDefeat() {
             for (let i = enemies.length - 1; i >= 0; i--) {
@@ -120,36 +108,118 @@
                     console.log("Enemy Defeated!");
                 }
             }
-        }
-        
-        function animate() {
-            requestAnimationFrame(animate);
-            if (isPlaying) {
-                // Update enemy positions and check for city damage
-                renderer.render(scene, camera);
-            }
-        } // End of animate()
+        } // End of checkDefeat()
 
-        function spawnEnemy(side) {
-            const geometry = new THREE.SphereGeometry(1);
-            const material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
-            const enemy = new THREE.Mesh(geometry, material);
+        function createTextLabel(text) {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = 256;
+            canvas.height = 128;
         
-            // Filter notes: Left side enemies get notes < 60, Right side > 60
-            const possibleNotes = side === 'left' ? [48, 50, 52] : [72, 74, 76];
-            const targetNote = possibleNotes[Math.floor(Math.random() * possibleNotes.length)];
+            // Background (optional, helps readability)
+            context.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            context.fillRect(0, 0, canvas.width, canvas.height);
+        
+            // Text Style
+            context.font = 'Bold 80px Arial';
+            context.fillStyle = 'white';
+            context.textAlign = 'center';
+            context.fillText(text, 128, 90);
+        
+            const texture = new THREE.CanvasTexture(canvas);
+            const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+            const sprite = new THREE.Sprite(spriteMaterial);
             
-            // Store data for the hit-check logic
+            // Scale the label so it's readable
+            sprite.scale.set(2, 1, 1); 
+            return sprite;
+        } // End of createTextLabel()
+        
+        function getNoteData(midiNumber) {
+            const name = NOTES[midiNumber % 12];
+            const octave = Math.floor(midiNumber / 12) - 1;
+            // Standard 88-key piano is MIDI 21 to 108. Middle C is 60.
+            const side = midiNumber < 60 ? 'left' : 'right'; 
+            return { name, octave, side };
+        } // End of getNoteData
+
+        function handleMidiMessage(msg) {
+            const [status, note, velocity] = msg.data;
+            const isNoteOn = (status & 0xf0) === 0x90 && velocity > 0;
+            const isNoteOff = (status & 0xf0) === 0x80 || (velocity === 0);
+        
+            if (isNoteOn) {
+                activeNotes.add(note);
+                checkDefeat();
+            } else if (isNoteOff) {
+                activeNotes.delete(note);
+            }
+        } // End of handleMidiMessage()
+        
+        function onMidiSuccess(midiAccess) {
+            for (let input of midiAccess.inputs.values()) {
+                input.onmidimessage = handleMidiMessage;
+            }
+        } // End of onMidiSuccess()
+
+        function spawnEnemy(side, notesArray) {
+            let geometry;
+            const noteCount = notesArray.length;
+        
+            // Pick shape based on note count
+            if (noteCount === 1) {
+                geometry = new THREE.SphereGeometry(0.7, 16, 16); // Single Note
+            } else if (noteCount === 2 || noteCount === 3) {
+                geometry = new THREE.TetrahedronGeometry(1);     // 3-Note Chord
+            } else if (noteCount === 4) {
+                geometry = new THREE.BoxGeometry(1.2, 1.2, 1.2); // 4-Note Chord
+            } else {
+                geometry = new THREE.OctahedronGeometry(1);      // Fallback
+            }
+        
+            const material = new THREE.MeshStandardMaterial({ 
+                color: side === 'left' ? 0xff4444 : 0x4444ff,
+                wireframe: noteCount > 1 // Visual hint for chords
+            });
+        
+            const enemy = new THREE.Mesh(geometry, material);
+
+            // Create and attach the label
+            const label = createTextLabel(labelName);
+            label.position.set(0, 1.5, 0); // Position slightly above the shape
+            enemy.add(label); 
+            
+            // Position based on side (16:9 screen bounds)
+            const xPos = side === 'left' ? -15 : 15;
+            enemy.position.set(xPos, 0, 0);
+        
+            // Store the logic data
             enemy.userData = {
-                requiredNotes: [targetNote], // Can be multiple for chords
+                requiredNotes: notesArray, // e.g., [60, 64, 67] for C Major
                 side: side,
-                isChord: false
+                speed: 0.05
             };
         
-            enemy.position.set(side === 'left' ? -20 : 20, 0, 0);
             scene.add(enemy);
             enemies.push(enemy);
         } // End of spawnEnemy()
+
+        function updateEnemies() {
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                
+                // Move towards center
+                if (enemy.position.x > 0) enemy.position.x -= enemy.userData.speed;
+                if (enemy.position.x < 0) enemy.position.x += enemy.userData.speed;
+        
+                // Collision with City (Center)
+                if (Math.abs(enemy.position.x) < 1.5) {
+                    takeDamage(10);
+                    scene.remove(enemy);
+                    enemies.splice(i, 1);
+                }
+            }
+        } // End of updateEnemies()
     </script>
 </body>
 </html>
